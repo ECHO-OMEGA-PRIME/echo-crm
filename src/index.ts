@@ -869,7 +869,7 @@ async function cronHandler(env: Env): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instance_id: 'echo-crm', role: 'system', content: digest, importance: 6, tags: ['crm', 'digest'] }),
       });
-    } catch { /* best effort */ }
+    } catch (e) { log('warn', 'Shared Brain digest ingest failed', { error: String(e) }); }
   } catch (e) {
     log('error', 'Cron failed', { error: String(e) });
   }
@@ -883,7 +883,7 @@ app.onError((err, c) => {
   if (err.message?.includes('JSON')) {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
-  console.error(`[echo-crm] ${err.message}`);
+  log('error', 'Unhandled request error', { error: err.message, stack: err.stack });
   return c.json({ error: 'Internal server error' }, 500);
 });
 
