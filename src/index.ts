@@ -888,44 +888,49 @@ app.post('/lead-scoring/score', async (c) => {
   const err = requireBody(body, 'contact_id');
   if (err) return fail(err);
 
-  const contact = await c.env.DB.prepare("SELECT * FROM contacts WHERE id = ?").bind(body!.contact_id).first();
-  if (!contact) return fail('Contact not found', 404);
-
-  // Rule-based scoring
-  const rules = await c.env.DB.prepare("SELECT * FROM lead_scoring_rules WHERE is_active = 1").all();
-  let score = 0;
-  for (const rule of rules.results as Record<string, unknown>[]) {
-    const fieldVal = (contact as Record<string, unknown>)[rule.field as string];
-    if (fieldVal !== undefined) {
-      const op = rule.operator as string;
-      const ruleVal = rule.value as string;
-      if (op === 'equals' && String(fieldVal) === ruleVal) score += rule.score as number;
-      else if (op === 'contains' && String(fieldVal).includes(ruleVal)) score += rule.score as number;
-      else if (op === 'not_empty' && fieldVal) score += rule.score as number;
-    }
-  }
-
-  // Activity bonus: +5 per activity, +10 per email open
-  const actCount = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities WHERE contact_id = ?").bind(body!.contact_id).first<{ n: number }>();
-  const emailOpens = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM email_events WHERE contact_id = ? AND type = 'opened'").bind(body!.contact_id).first<{ n: number }>();
-  score += (actCount?.n || 0) * 5 + (emailOpens?.n || 0) * 10;
-
-  // AI enhancement via Engine Runtime
   try {
-    const resp = await c.env.ENGINE_RUNTIME.fetch('https://engine-runtime/query', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: `Score this lead: ${contact.first_name} ${contact.last_name}, title: ${contact.title || 'unknown'}, source: ${contact.source}, company: ${contact.company_id ? 'has company' : 'no company'}, email: ${contact.email ? 'yes' : 'no'}, activities: ${actCount?.n || 0}`, domain: 'sales', limit: 1 }),
-    });
-    if (resp.ok) {
-      const data = await resp.json() as { engines?: { relevance_score?: number }[] };
-      if (data.engines?.[0]?.relevance_score) score += Math.round(data.engines[0].relevance_score * 20);
-    }
-  } catch { /* Engine Runtime unavailable, use rule-based only */ }
+    const contact = await c.env.DB.prepare("SELECT * FROM contacts WHERE id = ?").bind(body!.contact_id).first();
+    if (!contact) return fail('Contact not found', 404);
 
-  score = Math.min(100, Math.max(0, score));
-  await c.env.DB.prepare("UPDATE contacts SET lead_score = ?, updated_at = ? WHERE id = ?").bind(score, nowISO(), body!.contact_id).run();
-  return ok({ contact_id: body!.contact_id, score });
+    // Rule-based scoring
+    const rules = await c.env.DB.prepare("SELECT * FROM lead_scoring_rules WHERE is_active = 1").all();
+    let score = 0;
+    for (const rule of rules.results as Record<string, unknown>[]) {
+      const fieldVal = (contact as Record<string, unknown>)[rule.field as string];
+      if (fieldVal !== undefined) {
+        const op = rule.operator as string;
+        const ruleVal = rule.value as string;
+        if (op === 'equals' && String(fieldVal) === ruleVal) score += rule.score as number;
+        else if (op === 'contains' && String(fieldVal).includes(ruleVal)) score += rule.score as number;
+        else if (op === 'not_empty' && fieldVal) score += rule.score as number;
+      }
+    }
+
+    // Activity bonus: +5 per activity, +10 per email open
+    const actCount = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities WHERE contact_id = ?").bind(body!.contact_id).first<{ n: number }>();
+    const emailOpens = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM email_events WHERE contact_id = ? AND type = 'opened'").bind(body!.contact_id).first<{ n: number }>();
+    score += (actCount?.n || 0) * 5 + (emailOpens?.n || 0) * 10;
+
+    // AI enhancement via Engine Runtime
+    try {
+      const resp = await c.env.ENGINE_RUNTIME.fetch('https://engine-runtime/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: `Score this lead: ${contact.first_name} ${contact.last_name}, title: ${contact.title || 'unknown'}, source: ${contact.source}, company: ${contact.company_id ? 'has company' : 'no company'}, email: ${contact.email ? 'yes' : 'no'}, activities: ${actCount?.n || 0}`, domain: 'sales', limit: 1 }),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as { engines?: { relevance_score?: number }[] };
+        if (data.engines?.[0]?.relevance_score) score += Math.round(data.engines[0].relevance_score * 20);
+      }
+    } catch { /* Engine Runtime unavailable, use rule-based only */ }
+
+    score = Math.min(100, Math.max(0, score));
+    await c.env.DB.prepare("UPDATE contacts SET lead_score = ?, updated_at = ? WHERE id = ?").bind(score, nowISO(), body!.contact_id).run();
+    return ok({ contact_id: body!.contact_id, score });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /lead-scoring/score', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -936,62 +941,82 @@ app.get('/analytics/pipeline', async (c) => {
   const pipelineId = new URL(c.req.url).searchParams.get('pipeline_id');
   if (!pipelineId) return fail('pipeline_id required');
 
-  const stages = await c.env.DB.prepare("SELECT ds.id, ds.name, ds.position, ds.probability, COUNT(d.id) AS deal_count, COALESCE(SUM(d.value), 0) AS total_value FROM deal_stages ds LEFT JOIN deals d ON ds.id = d.stage_id AND d.status = 'open' WHERE ds.pipeline_id = ? GROUP BY ds.id ORDER BY ds.position").bind(pipelineId).all();
-  const wonDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(value), 0) AS total FROM deals WHERE pipeline_id = ? AND status = 'won'").bind(pipelineId).first<{ n: number; total: number }>();
-  const lostDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(value), 0) AS total FROM deals WHERE pipeline_id = ? AND status = 'lost'").bind(pipelineId).first<{ n: number; total: number }>();
-  const openValue = await c.env.DB.prepare("SELECT COALESCE(SUM(value), 0) AS total FROM deals WHERE pipeline_id = ? AND status = 'open'").bind(pipelineId).first<{ total: number }>();
-  const weightedValue = await c.env.DB.prepare("SELECT COALESCE(SUM(d.value * ds.probability / 100), 0) AS total FROM deals d JOIN deal_stages ds ON d.stage_id = ds.id WHERE d.pipeline_id = ? AND d.status = 'open'").bind(pipelineId).first<{ total: number }>();
+  try {
+    const stages = await c.env.DB.prepare("SELECT ds.id, ds.name, ds.position, ds.probability, COUNT(d.id) AS deal_count, COALESCE(SUM(d.value), 0) AS total_value FROM deal_stages ds LEFT JOIN deals d ON ds.id = d.stage_id AND d.status = 'open' WHERE ds.pipeline_id = ? GROUP BY ds.id ORDER BY ds.position").bind(pipelineId).all();
+    const wonDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(value), 0) AS total FROM deals WHERE pipeline_id = ? AND status = 'won'").bind(pipelineId).first<{ n: number; total: number }>();
+    const lostDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(value), 0) AS total FROM deals WHERE pipeline_id = ? AND status = 'lost'").bind(pipelineId).first<{ n: number; total: number }>();
+    const openValue = await c.env.DB.prepare("SELECT COALESCE(SUM(value), 0) AS total FROM deals WHERE pipeline_id = ? AND status = 'open'").bind(pipelineId).first<{ total: number }>();
+    const weightedValue = await c.env.DB.prepare("SELECT COALESCE(SUM(d.value * ds.probability / 100), 0) AS total FROM deals d JOIN deal_stages ds ON d.stage_id = ds.id WHERE d.pipeline_id = ? AND d.status = 'open'").bind(pipelineId).first<{ total: number }>();
 
-  return ok({
-    stages: stages.results,
-    won: { count: wonDeals?.n || 0, value: wonDeals?.total || 0 },
-    lost: { count: lostDeals?.n || 0, value: lostDeals?.total || 0 },
-    open_value: openValue?.total || 0,
-    weighted_pipeline: weightedValue?.total || 0,
-    win_rate: (wonDeals?.n && lostDeals?.n) ? Math.round((wonDeals.n / (wonDeals.n + lostDeals.n)) * 100) : 0,
-  });
+    return ok({
+      stages: stages.results,
+      won: { count: wonDeals?.n || 0, value: wonDeals?.total || 0 },
+      lost: { count: lostDeals?.n || 0, value: lostDeals?.total || 0 },
+      open_value: openValue?.total || 0,
+      weighted_pipeline: weightedValue?.total || 0,
+      win_rate: (wonDeals?.n && lostDeals?.n) ? Math.round((wonDeals.n / (wonDeals.n + lostDeals.n)) * 100) : 0,
+    });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /analytics/pipeline', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/analytics/contacts', async (c) => {
-  const byStatus = await c.env.DB.prepare("SELECT lead_status, COUNT(*) AS n FROM contacts GROUP BY lead_status").all();
-  const bySource = await c.env.DB.prepare("SELECT source, COUNT(*) AS n FROM contacts GROUP BY source ORDER BY n DESC").all();
-  const topScored = await c.env.DB.prepare("SELECT id, first_name, last_name, email, lead_score, lead_status FROM contacts WHERE lead_score > 0 ORDER BY lead_score DESC LIMIT 10").all();
-  const total = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts").first<{ n: number }>();
-  const thisMonth = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts WHERE created_at >= date('now', 'start of month')").first<{ n: number }>();
+  try {
+    const byStatus = await c.env.DB.prepare("SELECT lead_status, COUNT(*) AS n FROM contacts GROUP BY lead_status").all();
+    const bySource = await c.env.DB.prepare("SELECT source, COUNT(*) AS n FROM contacts GROUP BY source ORDER BY n DESC").all();
+    const topScored = await c.env.DB.prepare("SELECT id, first_name, last_name, email, lead_score, lead_status FROM contacts WHERE lead_score > 0 ORDER BY lead_score DESC LIMIT 10").all();
+    const total = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts").first<{ n: number }>();
+    const thisMonth = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts WHERE created_at >= date('now', 'start of month')").first<{ n: number }>();
 
-  return ok({
-    total: total?.n || 0,
-    this_month: thisMonth?.n || 0,
-    by_status: byStatus.results,
-    by_source: bySource.results,
-    top_scored: topScored.results,
-  });
+    return ok({
+      total: total?.n || 0,
+      this_month: thisMonth?.n || 0,
+      by_status: byStatus.results,
+      by_source: bySource.results,
+      top_scored: topScored.results,
+    });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /analytics/contacts', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/analytics/activity', async (c) => {
-  const byType = await c.env.DB.prepare("SELECT type, COUNT(*) AS n FROM activities GROUP BY type ORDER BY n DESC").all();
-  const thisWeek = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities WHERE created_at >= date('now', '-7 days')").first<{ n: number }>();
-  const overdue = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities WHERE is_done = 0 AND due_date < date('now')").first<{ n: number }>();
-  const upcoming = await c.env.DB.prepare("SELECT * FROM activities WHERE is_done = 0 AND due_date IS NOT NULL AND due_date >= date('now') ORDER BY due_date ASC LIMIT 10").all();
+  try {
+    const byType = await c.env.DB.prepare("SELECT type, COUNT(*) AS n FROM activities GROUP BY type ORDER BY n DESC").all();
+    const thisWeek = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities WHERE created_at >= date('now', '-7 days')").first<{ n: number }>();
+    const overdue = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities WHERE is_done = 0 AND due_date < date('now')").first<{ n: number }>();
+    const upcoming = await c.env.DB.prepare("SELECT * FROM activities WHERE is_done = 0 AND due_date IS NOT NULL AND due_date >= date('now') ORDER BY due_date ASC LIMIT 10").all();
 
-  return ok({
-    by_type: byType.results,
-    this_week: thisWeek?.n || 0,
-    overdue: overdue?.n || 0,
-    upcoming: upcoming.results,
-  });
+    return ok({
+      by_type: byType.results,
+      this_week: thisWeek?.n || 0,
+      overdue: overdue?.n || 0,
+      upcoming: upcoming.results,
+    });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /analytics/activity', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/analytics/revenue', async (c) => {
-  const monthly = await c.env.DB.prepare("SELECT strftime('%Y-%m', actual_close_date) AS month, SUM(value) AS revenue, COUNT(*) AS deals FROM deals WHERE status = 'won' AND actual_close_date IS NOT NULL GROUP BY month ORDER BY month DESC LIMIT 12").all();
-  const avgDealSize = await c.env.DB.prepare("SELECT AVG(value) AS avg_value FROM deals WHERE status = 'won'").first<{ avg_value: number }>();
-  const avgCycleTime = await c.env.DB.prepare("SELECT AVG(JULIANDAY(actual_close_date) - JULIANDAY(created_at)) AS avg_days FROM deals WHERE status = 'won' AND actual_close_date IS NOT NULL").first<{ avg_days: number }>();
+  try {
+    const monthly = await c.env.DB.prepare("SELECT strftime('%Y-%m', actual_close_date) AS month, SUM(value) AS revenue, COUNT(*) AS deals FROM deals WHERE status = 'won' AND actual_close_date IS NOT NULL GROUP BY month ORDER BY month DESC LIMIT 12").all();
+    const avgDealSize = await c.env.DB.prepare("SELECT AVG(value) AS avg_value FROM deals WHERE status = 'won'").first<{ avg_value: number }>();
+    const avgCycleTime = await c.env.DB.prepare("SELECT AVG(JULIANDAY(actual_close_date) - JULIANDAY(created_at)) AS avg_days FROM deals WHERE status = 'won' AND actual_close_date IS NOT NULL").first<{ avg_days: number }>();
 
-  return ok({
-    monthly: monthly.results,
-    avg_deal_size: Math.round((avgDealSize?.avg_value || 0) * 100) / 100,
-    avg_cycle_days: Math.round(avgCycleTime?.avg_days || 0),
-  });
+    return ok({
+      monthly: monthly.results,
+      avg_deal_size: Math.round((avgDealSize?.avg_value || 0) * 100) / 100,
+      avg_cycle_days: Math.round(avgCycleTime?.avg_days || 0),
+    });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /analytics/revenue', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1026,15 +1051,24 @@ app.post('/import/contacts', async (c) => {
   }
 
   const importStatus = errors > 0 ? 'partial' : 'completed';
-  await c.env.DB.prepare("INSERT INTO imports (id, type, total_rows, imported, skipped, errors, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(importId, 'contacts', contacts.length, imported, skipped, errors, importStatus, nowISO()).run();
+  try {
+    await c.env.DB.prepare("INSERT INTO imports (id, type, total_rows, imported, skipped, errors, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(importId, 'contacts', contacts.length, imported, skipped, errors, importStatus, nowISO()).run();
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /import/contacts (import log)', error: e?.message }));
+  }
   log('info', 'Contacts imported', { importId, imported, skipped, errors });
   return ok({ import_id: importId, imported, skipped, errors });
 });
 
 app.get('/export/contacts', async (c) => {
-  const rows = await c.env.DB.prepare("SELECT * FROM contacts ORDER BY created_at DESC LIMIT 5000").all();
-  return ok({ contacts: rows.results, count: rows.results.length });
+  try {
+    const rows = await c.env.DB.prepare("SELECT * FROM contacts ORDER BY created_at DESC LIMIT 5000").all();
+    return ok({ contacts: rows.results, count: rows.results.length });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /export/contacts', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1053,8 +1087,13 @@ app.get('/activity-log', async (c) => {
   if (entityId) { where += ' AND entity_id = ?'; binds.push(entityId); }
 
   binds.push(limit, offset);
-  const rows = await c.env.DB.prepare(`SELECT * FROM activity_log WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
-  return ok({ log: rows.results });
+  try {
+    const rows = await c.env.DB.prepare(`SELECT * FROM activity_log WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
+    return ok({ log: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /activity-log', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
