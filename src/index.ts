@@ -23,12 +23,18 @@ function log(level: string, msg: string, extra: Record<string, unknown> = {}): v
   console.log(JSON.stringify({ ts: new Date().toISOString(), level, msg, service: 'echo-crm', ...extra }));
 }
 
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Echo-API-Key',
+};
+
 function ok(data: Record<string, unknown> = {}): Response {
-  return Response.json({ ok: true, ...data });
+  return Response.json({ ok: true, ...data }, { headers: CORS_HEADERS });
 }
 
 function fail(error: string, status = 400): Response {
-  return Response.json({ ok: false, error }, { status });
+  return Response.json({ ok: false, error }, { status, headers: CORS_HEADERS });
 }
 
 function requireBody(body: unknown, ...fields: string[]): string | null {
