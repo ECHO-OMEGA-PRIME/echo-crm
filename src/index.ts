@@ -141,19 +141,24 @@ app.get('/health', async (c) => {
 });
 
 app.get('/status', async (c) => {
-  const [contacts, companies, deals, activities, pipelines] = await Promise.all([
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts").first<{ n: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM companies").first<{ n: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM deals").first<{ n: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities").first<{ n: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM pipelines").first<{ n: number }>(),
-  ]);
-  return ok({
-    service: 'echo-crm', version: '1.1.0',
-    contacts: contacts?.n || 0, companies: companies?.n || 0, deals: deals?.n || 0,
-    activities: activities?.n || 0, pipelines: pipelines?.n || 0,
-    endpoints: 72, tables: 12, modules: 10,
-  });
+  try {
+    const [contacts, companies, deals, activities, pipelines] = await Promise.all([
+      c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts").first<{ n: number }>(),
+      c.env.DB.prepare("SELECT COUNT(*) AS n FROM companies").first<{ n: number }>(),
+      c.env.DB.prepare("SELECT COUNT(*) AS n FROM deals").first<{ n: number }>(),
+      c.env.DB.prepare("SELECT COUNT(*) AS n FROM activities").first<{ n: number }>(),
+      c.env.DB.prepare("SELECT COUNT(*) AS n FROM pipelines").first<{ n: number }>(),
+    ]);
+    return ok({
+      service: 'echo-crm', version: '1.1.0',
+      contacts: contacts?.n || 0, companies: companies?.n || 0, deals: deals?.n || 0,
+      activities: activities?.n || 0, pipelines: pipelines?.n || 0,
+      endpoints: 72, tables: 12, modules: 10,
+    });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: '/status', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -161,8 +166,13 @@ app.get('/status', async (c) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.get('/pipelines', async (c) => {
-  const rows = await c.env.DB.prepare("SELECT * FROM pipelines ORDER BY created_at DESC").all();
-  return ok({ pipelines: rows.results });
+  try {
+    const rows = await c.env.DB.prepare("SELECT * FROM pipelines ORDER BY created_at DESC").all();
+    return ok({ pipelines: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: '/pipelines', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/pipelines', async (c) => {
@@ -170,27 +180,47 @@ app.post('/pipelines', async (c) => {
   const err = requireBody(body, 'name');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare("INSERT INTO pipelines (id, name, is_default) VALUES (?, ?, ?)").bind(id, sanitize(body!.name as string, 100), body!.is_default ? 1 : 0).run();
-  log('info', 'Pipeline created', { id });
-  return ok({ id });
+  try {
+    await c.env.DB.prepare("INSERT INTO pipelines (id, name, is_default) VALUES (?, ?, ?)").bind(id, sanitize(body!.name as string, 100), body!.is_default ? 1 : 0).run();
+    log('info', 'Pipeline created', { id });
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /pipelines', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/pipelines/:id', async (c) => {
-  const row = await c.env.DB.prepare("SELECT * FROM pipelines WHERE id = ?").bind(c.req.param('id')).first();
-  if (!row) return fail('Pipeline not found', 404);
-  const stages = await c.env.DB.prepare("SELECT * FROM deal_stages WHERE pipeline_id = ? ORDER BY position").bind(c.req.param('id')).all();
-  return ok({ pipeline: row, stages: stages.results });
+  try {
+    const row = await c.env.DB.prepare("SELECT * FROM pipelines WHERE id = ?").bind(c.req.param('id')).first();
+    if (!row) return fail('Pipeline not found', 404);
+    const stages = await c.env.DB.prepare("SELECT * FROM deal_stages WHERE pipeline_id = ? ORDER BY position").bind(c.req.param('id')).all();
+    return ok({ pipeline: row, stages: stages.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /pipelines/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/pipelines/:id', async (c) => {
-  await c.env.DB.prepare("DELETE FROM pipelines WHERE id = ?").bind(c.req.param('id')).run();
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.prepare("DELETE FROM pipelines WHERE id = ?").bind(c.req.param('id')).run();
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /pipelines/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // Deal stages
 app.get('/pipelines/:id/stages', async (c) => {
-  const rows = await c.env.DB.prepare("SELECT * FROM deal_stages WHERE pipeline_id = ? ORDER BY position").bind(c.req.param('id')).all();
-  return ok({ stages: rows.results });
+  try {
+    const rows = await c.env.DB.prepare("SELECT * FROM deal_stages WHERE pipeline_id = ? ORDER BY position").bind(c.req.param('id')).all();
+    return ok({ stages: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /pipelines/:id/stages', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/pipelines/:id/stages', async (c) => {
@@ -198,9 +228,14 @@ app.post('/pipelines/:id/stages', async (c) => {
   const err = requireBody(body, 'name');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare("INSERT INTO deal_stages (id, pipeline_id, name, position, probability, rotting_days) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, c.req.param('id'), sanitize(body!.name as string, 100), body!.position || 0, body!.probability || 0, body!.rotting_days || 30).run();
-  return ok({ id });
+  try {
+    await c.env.DB.prepare("INSERT INTO deal_stages (id, pipeline_id, name, position, probability, rotting_days) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(id, c.req.param('id'), sanitize(body!.name as string, 100), body!.position || 0, body!.probability || 0, body!.rotting_days || 30).run();
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /pipelines/:id/stages', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/stages/:id', async (c) => {
@@ -216,15 +251,25 @@ app.put('/stages/:id', async (c) => {
   }
   if (sets.length === 0) return fail('No valid fields');
   vals.push(c.req.param('id'));
-  await c.env.DB.prepare(`UPDATE deal_stages SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-  return ok({ updated: true });
+  try {
+    await c.env.DB.prepare(`UPDATE deal_stages SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
+    return ok({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'PUT /stages/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/stages/:id', async (c) => {
-  const activeDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM deals WHERE stage_id = ?").bind(c.req.param('id')).first<{ n: number }>();
-  if (activeDeals && activeDeals.n > 0) return fail('Cannot delete stage with active deals');
-  await c.env.DB.prepare("DELETE FROM deal_stages WHERE id = ?").bind(c.req.param('id')).run();
-  return ok({ deleted: true });
+  try {
+    const activeDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM deals WHERE stage_id = ?").bind(c.req.param('id')).first<{ n: number }>();
+    if (activeDeals && activeDeals.n > 0) return fail('Cannot delete stage with active deals');
+    await c.env.DB.prepare("DELETE FROM deal_stages WHERE id = ?").bind(c.req.param('id')).run();
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /stages/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -246,9 +291,14 @@ app.get('/contacts', async (c) => {
   if (source) { where += ' AND source = ?'; binds.push(source); }
 
   binds.push(limit, offset);
-  const rows = await c.env.DB.prepare(`SELECT c.*, co.name AS company_name FROM contacts c LEFT JOIN companies co ON c.company_id = co.id WHERE ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
-  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM contacts WHERE ${where}`).bind(...binds.slice(0, -2)).first<{ n: number }>();
-  return ok({ contacts: rows.results, total: total?.n || 0 });
+  try {
+    const rows = await c.env.DB.prepare(`SELECT c.*, co.name AS company_name FROM contacts c LEFT JOIN companies co ON c.company_id = co.id WHERE ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
+    const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM contacts WHERE ${where}`).bind(...binds.slice(0, -2)).first<{ n: number }>();
+    return ok({ contacts: rows.results, total: total?.n || 0 });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /contacts', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/contacts', async (c) => {
@@ -257,28 +307,38 @@ app.post('/contacts', async (c) => {
   if (err) return fail(err);
   const id = uid();
   const now = nowISO();
-  await c.env.DB.prepare(
-    "INSERT INTO contacts (id, company_id, first_name, last_name, email, phone, title, source, lead_status, tags, custom_fields, address, city, state, zip, country, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(
-    id, body!.company_id || null, sanitize(body!.first_name as string, 100), sanitize((body!.last_name || '') as string, 100),
-    sanitize((body!.email || '') as string, 200), sanitize((body!.phone || '') as string, 30), sanitize((body!.title || '') as string, 100),
-    body!.source || 'manual', body!.lead_status || 'new',
-    JSON.stringify(body!.tags || []), JSON.stringify(body!.custom_fields || {}),
-    sanitize((body!.address || '') as string, 200), sanitize((body!.city || '') as string, 100),
-    sanitize((body!.state || '') as string, 50), sanitize((body!.zip || '') as string, 20),
-    body!.country || 'US', sanitize((body!.notes || '') as string, 5000), now, now
-  ).run();
-  await logActivity(c.env.DB, 'contact', id, 'created', `${body!.first_name} ${body!.last_name || ''}`);
-  log('info', 'Contact created', { id });
-  return ok({ id });
+  try {
+    await c.env.DB.prepare(
+      "INSERT INTO contacts (id, company_id, first_name, last_name, email, phone, title, source, lead_status, tags, custom_fields, address, city, state, zip, country, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id, body!.company_id || null, sanitize(body!.first_name as string, 100), sanitize((body!.last_name || '') as string, 100),
+      sanitize((body!.email || '') as string, 200), sanitize((body!.phone || '') as string, 30), sanitize((body!.title || '') as string, 100),
+      body!.source || 'manual', body!.lead_status || 'new',
+      JSON.stringify(body!.tags || []), JSON.stringify(body!.custom_fields || {}),
+      sanitize((body!.address || '') as string, 200), sanitize((body!.city || '') as string, 100),
+      sanitize((body!.state || '') as string, 50), sanitize((body!.zip || '') as string, 20),
+      body!.country || 'US', sanitize((body!.notes || '') as string, 5000), now, now
+    ).run();
+    await logActivity(c.env.DB, 'contact', id, 'created', `${body!.first_name} ${body!.last_name || ''}`);
+    log('info', 'Contact created', { id });
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /contacts', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/contacts/:id', async (c) => {
-  const row = await c.env.DB.prepare("SELECT c.*, co.name AS company_name FROM contacts c LEFT JOIN companies co ON c.company_id = co.id WHERE c.id = ?").bind(c.req.param('id')).first();
-  if (!row) return fail('Contact not found', 404);
-  const deals = await c.env.DB.prepare("SELECT id, title, value, status, stage_id FROM deals WHERE contact_id = ? ORDER BY created_at DESC LIMIT 10").bind(c.req.param('id')).all();
-  const recentActivities = await c.env.DB.prepare("SELECT * FROM activities WHERE contact_id = ? ORDER BY created_at DESC LIMIT 10").bind(c.req.param('id')).all();
-  return ok({ contact: row, deals: deals.results, activities: recentActivities.results });
+  try {
+    const row = await c.env.DB.prepare("SELECT c.*, co.name AS company_name FROM contacts c LEFT JOIN companies co ON c.company_id = co.id WHERE c.id = ?").bind(c.req.param('id')).first();
+    if (!row) return fail('Contact not found', 404);
+    const deals = await c.env.DB.prepare("SELECT id, title, value, status, stage_id FROM deals WHERE contact_id = ? ORDER BY created_at DESC LIMIT 10").bind(c.req.param('id')).all();
+    const recentActivities = await c.env.DB.prepare("SELECT * FROM activities WHERE contact_id = ? ORDER BY created_at DESC LIMIT 10").bind(c.req.param('id')).all();
+    return ok({ contact: row, deals: deals.results, activities: recentActivities.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /contacts/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/contacts/:id', async (c) => {
@@ -296,19 +356,29 @@ app.put('/contacts/:id', async (c) => {
     }
   }
   vals.push(c.req.param('id'));
-  await c.env.DB.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-  return ok({ updated: true });
+  try {
+    await c.env.DB.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
+    return ok({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'PUT /contacts/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/contacts/:id', async (c) => {
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM deals WHERE contact_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM activities WHERE contact_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM notes WHERE contact_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM email_events WHERE contact_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM contacts WHERE id = ?").bind(c.req.param('id')),
-  ]);
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM deals WHERE contact_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM activities WHERE contact_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM notes WHERE contact_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM email_events WHERE contact_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM contacts WHERE id = ?").bind(c.req.param('id')),
+    ]);
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /contacts/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -327,9 +397,14 @@ app.get('/companies', async (c) => {
   if (industry) { where += ' AND industry = ?'; binds.push(industry); }
 
   binds.push(limit, offset);
-  const rows = await c.env.DB.prepare(`SELECT * FROM companies WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
-  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM companies WHERE ${where}`).bind(...binds.slice(0, -2)).first<{ n: number }>();
-  return ok({ companies: rows.results, total: total?.n || 0 });
+  try {
+    const rows = await c.env.DB.prepare(`SELECT * FROM companies WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
+    const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM companies WHERE ${where}`).bind(...binds.slice(0, -2)).first<{ n: number }>();
+    return ok({ companies: rows.results, total: total?.n || 0 });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /companies', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/companies', async (c) => {
@@ -338,28 +413,38 @@ app.post('/companies', async (c) => {
   if (err) return fail(err);
   const id = uid();
   const now = nowISO();
-  await c.env.DB.prepare(
-    "INSERT INTO companies (id, name, domain, industry, size, revenue, phone, address, city, state, zip, country, tags, custom_fields, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(
-    id, sanitize(body!.name as string, 200), sanitize((body!.domain || '') as string, 200),
-    sanitize((body!.industry || '') as string, 100), body!.size || null, body!.revenue || null,
-    sanitize((body!.phone || '') as string, 30), sanitize((body!.address || '') as string, 200),
-    sanitize((body!.city || '') as string, 100), sanitize((body!.state || '') as string, 50),
-    sanitize((body!.zip || '') as string, 20), body!.country || 'US',
-    JSON.stringify(body!.tags || []), JSON.stringify(body!.custom_fields || {}),
-    sanitize((body!.notes || '') as string, 5000), now, now
-  ).run();
-  await logActivity(c.env.DB, 'company', id, 'created', body!.name as string);
-  log('info', 'Company created', { id });
-  return ok({ id });
+  try {
+    await c.env.DB.prepare(
+      "INSERT INTO companies (id, name, domain, industry, size, revenue, phone, address, city, state, zip, country, tags, custom_fields, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id, sanitize(body!.name as string, 200), sanitize((body!.domain || '') as string, 200),
+      sanitize((body!.industry || '') as string, 100), body!.size || null, body!.revenue || null,
+      sanitize((body!.phone || '') as string, 30), sanitize((body!.address || '') as string, 200),
+      sanitize((body!.city || '') as string, 100), sanitize((body!.state || '') as string, 50),
+      sanitize((body!.zip || '') as string, 20), body!.country || 'US',
+      JSON.stringify(body!.tags || []), JSON.stringify(body!.custom_fields || {}),
+      sanitize((body!.notes || '') as string, 5000), now, now
+    ).run();
+    await logActivity(c.env.DB, 'company', id, 'created', body!.name as string);
+    log('info', 'Company created', { id });
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /companies', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/companies/:id', async (c) => {
-  const row = await c.env.DB.prepare("SELECT * FROM companies WHERE id = ?").bind(c.req.param('id')).first();
-  if (!row) return fail('Company not found', 404);
-  const contactCount = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts WHERE company_id = ?").bind(c.req.param('id')).first<{ n: number }>();
-  const dealSum = await c.env.DB.prepare("SELECT SUM(value) AS total, COUNT(*) AS n FROM deals WHERE company_id = ? AND status = 'won'").bind(c.req.param('id')).first<{ total: number; n: number }>();
-  return ok({ company: row, contacts: contactCount?.n || 0, won_deals: dealSum?.n || 0, total_revenue: dealSum?.total || 0 });
+  try {
+    const row = await c.env.DB.prepare("SELECT * FROM companies WHERE id = ?").bind(c.req.param('id')).first();
+    if (!row) return fail('Company not found', 404);
+    const contactCount = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM contacts WHERE company_id = ?").bind(c.req.param('id')).first<{ n: number }>();
+    const dealSum = await c.env.DB.prepare("SELECT SUM(value) AS total, COUNT(*) AS n FROM deals WHERE company_id = ? AND status = 'won'").bind(c.req.param('id')).first<{ total: number; n: number }>();
+    return ok({ company: row, contacts: contactCount?.n || 0, won_deals: dealSum?.n || 0, total_revenue: dealSum?.total || 0 });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /companies/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/companies/:id', async (c) => {
@@ -377,18 +462,28 @@ app.put('/companies/:id', async (c) => {
     }
   }
   vals.push(c.req.param('id'));
-  await c.env.DB.prepare(`UPDATE companies SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-  return ok({ updated: true });
+  try {
+    await c.env.DB.prepare(`UPDATE companies SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
+    return ok({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'PUT /companies/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/companies/:id', async (c) => {
-  await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE contacts SET company_id = NULL WHERE company_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM notes WHERE company_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM activities WHERE company_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM companies WHERE id = ?").bind(c.req.param('id')),
-  ]);
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE contacts SET company_id = NULL WHERE company_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM notes WHERE company_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM activities WHERE company_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM companies WHERE id = ?").bind(c.req.param('id')),
+    ]);
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /companies/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -409,22 +504,32 @@ app.get('/deals', async (c) => {
   if (status) { where += ' AND d.status = ?'; binds.push(status); }
 
   binds.push(limit, offset);
-  const rows = await c.env.DB.prepare(`SELECT d.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name, co.name AS company_name, ds.name AS stage_name FROM deals d LEFT JOIN contacts c ON d.contact_id = c.id LEFT JOIN companies co ON d.company_id = co.id LEFT JOIN deal_stages ds ON d.stage_id = ds.id WHERE ${where} ORDER BY d.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
-  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM deals d WHERE ${where}`).bind(...binds.slice(0, -2)).first<{ n: number }>();
-  return ok({ deals: rows.results, total: total?.n || 0 });
+  try {
+    const rows = await c.env.DB.prepare(`SELECT d.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name, co.name AS company_name, ds.name AS stage_name FROM deals d LEFT JOIN contacts c ON d.contact_id = c.id LEFT JOIN companies co ON d.company_id = co.id LEFT JOIN deal_stages ds ON d.stage_id = ds.id WHERE ${where} ORDER BY d.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
+    const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM deals d WHERE ${where}`).bind(...binds.slice(0, -2)).first<{ n: number }>();
+    return ok({ deals: rows.results, total: total?.n || 0 });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /deals', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // Deal board view — grouped by stage
 app.get('/deals/board', async (c) => {
   const pipelineId = new URL(c.req.url).searchParams.get('pipeline_id');
   if (!pipelineId) return fail('pipeline_id required');
-  const stages = await c.env.DB.prepare("SELECT * FROM deal_stages WHERE pipeline_id = ? ORDER BY position").bind(pipelineId).all();
-  const deals = await c.env.DB.prepare("SELECT d.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name FROM deals d LEFT JOIN contacts c ON d.contact_id = c.id WHERE d.pipeline_id = ? AND d.status = 'open' ORDER BY d.created_at DESC").bind(pipelineId).all();
-  const board = (stages.results as Record<string, unknown>[]).map(stage => ({
-    ...stage,
-    deals: (deals.results as Record<string, unknown>[]).filter(d => d.stage_id === stage.id),
-  }));
-  return ok({ board });
+  try {
+    const stages = await c.env.DB.prepare("SELECT * FROM deal_stages WHERE pipeline_id = ? ORDER BY position").bind(pipelineId).all();
+    const deals = await c.env.DB.prepare("SELECT d.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name FROM deals d LEFT JOIN contacts c ON d.contact_id = c.id WHERE d.pipeline_id = ? AND d.status = 'open' ORDER BY d.created_at DESC").bind(pipelineId).all();
+    const board = (stages.results as Record<string, unknown>[]).map(stage => ({
+      ...stage,
+      deals: (deals.results as Record<string, unknown>[]).filter(d => d.stage_id === stage.id),
+    }));
+    return ok({ board });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /deals/board', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/deals', async (c) => {
@@ -433,26 +538,36 @@ app.post('/deals', async (c) => {
   if (err) return fail(err);
   const id = uid();
   const now = nowISO();
-  await c.env.DB.prepare(
-    "INSERT INTO deals (id, pipeline_id, stage_id, contact_id, company_id, title, value, currency, probability, expected_close_date, status, owner, tags, custom_fields, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(
-    id, body!.pipeline_id, body!.stage_id, body!.contact_id || null, body!.company_id || null,
-    sanitize(body!.title as string, 200), body!.value || 0, body!.currency || 'USD',
-    body!.probability || 0, body!.expected_close_date || null, 'open',
-    sanitize((body!.owner || '') as string, 100), JSON.stringify(body!.tags || []),
-    JSON.stringify(body!.custom_fields || {}), sanitize((body!.notes || '') as string, 5000), now, now
-  ).run();
-  await logActivity(c.env.DB, 'deal', id, 'created', `${body!.title} ($${body!.value || 0})`);
-  log('info', 'Deal created', { id, value: body!.value });
-  return ok({ id });
+  try {
+    await c.env.DB.prepare(
+      "INSERT INTO deals (id, pipeline_id, stage_id, contact_id, company_id, title, value, currency, probability, expected_close_date, status, owner, tags, custom_fields, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id, body!.pipeline_id, body!.stage_id, body!.contact_id || null, body!.company_id || null,
+      sanitize(body!.title as string, 200), body!.value || 0, body!.currency || 'USD',
+      body!.probability || 0, body!.expected_close_date || null, 'open',
+      sanitize((body!.owner || '') as string, 100), JSON.stringify(body!.tags || []),
+      JSON.stringify(body!.custom_fields || {}), sanitize((body!.notes || '') as string, 5000), now, now
+    ).run();
+    await logActivity(c.env.DB, 'deal', id, 'created', `${body!.title} ($${body!.value || 0})`);
+    log('info', 'Deal created', { id, value: body!.value });
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /deals', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/deals/:id', async (c) => {
-  const row = await c.env.DB.prepare("SELECT d.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name, co.name AS company_name, ds.name AS stage_name FROM deals d LEFT JOIN contacts c ON d.contact_id = c.id LEFT JOIN companies co ON d.company_id = co.id LEFT JOIN deal_stages ds ON d.stage_id = ds.id WHERE d.id = ?").bind(c.req.param('id')).first();
-  if (!row) return fail('Deal not found', 404);
-  const activities = await c.env.DB.prepare("SELECT * FROM activities WHERE deal_id = ? ORDER BY created_at DESC LIMIT 20").bind(c.req.param('id')).all();
-  const notes = await c.env.DB.prepare("SELECT * FROM notes WHERE deal_id = ? ORDER BY created_at DESC").bind(c.req.param('id')).all();
-  return ok({ deal: row, activities: activities.results, notes: notes.results });
+  try {
+    const row = await c.env.DB.prepare("SELECT d.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name, co.name AS company_name, ds.name AS stage_name FROM deals d LEFT JOIN contacts c ON d.contact_id = c.id LEFT JOIN companies co ON d.company_id = co.id LEFT JOIN deal_stages ds ON d.stage_id = ds.id WHERE d.id = ?").bind(c.req.param('id')).first();
+    if (!row) return fail('Deal not found', 404);
+    const activities = await c.env.DB.prepare("SELECT * FROM activities WHERE deal_id = ? ORDER BY created_at DESC LIMIT 20").bind(c.req.param('id')).all();
+    const notes = await c.env.DB.prepare("SELECT * FROM notes WHERE deal_id = ? ORDER BY created_at DESC").bind(c.req.param('id')).all();
+    return ok({ deal: row, activities: activities.results, notes: notes.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /deals/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/deals/:id', async (c) => {
@@ -475,19 +590,29 @@ app.put('/deals/:id', async (c) => {
     vals.push(nowISO());
   }
   vals.push(c.req.param('id'));
-  await c.env.DB.prepare(`UPDATE deals SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-  if (body.status) await logActivity(c.env.DB, 'deal', c.req.param('id'), `status_${body.status}`, body.lost_reason as string || body.won_reason as string || undefined);
-  if (body.stage_id) await logActivity(c.env.DB, 'deal', c.req.param('id'), 'stage_moved');
-  return ok({ updated: true });
+  try {
+    await c.env.DB.prepare(`UPDATE deals SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
+    if (body.status) await logActivity(c.env.DB, 'deal', c.req.param('id'), `status_${body.status}`, body.lost_reason as string || body.won_reason as string || undefined);
+    if (body.stage_id) await logActivity(c.env.DB, 'deal', c.req.param('id'), 'stage_moved');
+    return ok({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'PUT /deals/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/deals/:id', async (c) => {
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM activities WHERE deal_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM notes WHERE deal_id = ?").bind(c.req.param('id')),
-    c.env.DB.prepare("DELETE FROM deals WHERE id = ?").bind(c.req.param('id')),
-  ]);
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM activities WHERE deal_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM notes WHERE deal_id = ?").bind(c.req.param('id')),
+      c.env.DB.prepare("DELETE FROM deals WHERE id = ?").bind(c.req.param('id')),
+    ]);
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /deals/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // Move deal to stage
@@ -495,13 +620,18 @@ app.post('/deals/:id/move', async (c) => {
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const err = requireBody(body, 'stage_id');
   if (err) return fail(err);
-  // Get stage probability
-  const stage = await c.env.DB.prepare("SELECT probability FROM deal_stages WHERE id = ?").bind(body!.stage_id).first<{ probability: number }>();
-  if (!stage) return c.json({ error: 'Stage not found' }, 404);
-  await c.env.DB.prepare("UPDATE deals SET stage_id = ?, probability = ?, updated_at = ? WHERE id = ?")
-    .bind(body!.stage_id, stage?.probability || 0, nowISO(), c.req.param('id')).run();
-  await logActivity(c.env.DB, 'deal', c.req.param('id'), 'stage_moved');
-  return ok({ moved: true });
+  try {
+    // Get stage probability
+    const stage = await c.env.DB.prepare("SELECT probability FROM deal_stages WHERE id = ?").bind(body!.stage_id).first<{ probability: number }>();
+    if (!stage) return c.json({ error: 'Stage not found' }, 404);
+    await c.env.DB.prepare("UPDATE deals SET stage_id = ?, probability = ?, updated_at = ? WHERE id = ?")
+      .bind(body!.stage_id, stage?.probability || 0, nowISO(), c.req.param('id')).run();
+    await logActivity(c.env.DB, 'deal', c.req.param('id'), 'stage_moved');
+    return ok({ moved: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /deals/:id/move', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -525,8 +655,13 @@ app.get('/activities', async (c) => {
 
   const order = upcoming === 'true' ? 'due_date ASC' : 'created_at DESC';
   binds.push(limit, offset);
-  const rows = await c.env.DB.prepare(`SELECT a.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name FROM activities a LEFT JOIN contacts c ON a.contact_id = c.id WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...binds).all();
-  return ok({ activities: rows.results });
+  try {
+    const rows = await c.env.DB.prepare(`SELECT a.*, c.first_name || ' ' || COALESCE(c.last_name, '') AS contact_name FROM activities a LEFT JOIN contacts c ON a.contact_id = c.id WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...binds).all();
+    return ok({ activities: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /activities', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/activities', async (c) => {
@@ -534,42 +669,57 @@ app.post('/activities', async (c) => {
   const err = requireBody(body, 'type', 'subject');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare(
-    "INSERT INTO activities (id, contact_id, company_id, deal_id, type, subject, body, due_date, duration_minutes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(
-    id, body!.contact_id || null, body!.company_id || null, body!.deal_id || null,
-    sanitize(body!.type as string, 50), sanitize(body!.subject as string, 200),
-    sanitize((body!.body || '') as string, 5000), body!.due_date || null,
-    body!.duration_minutes || null, body!.created_by || null, nowISO()
-  ).run();
-  // Update last_contacted_at on contact
-  if (body!.contact_id) {
-    await c.env.DB.prepare("UPDATE contacts SET last_contacted_at = ? WHERE id = ?").bind(nowISO(), body!.contact_id).run();
+  try {
+    await c.env.DB.prepare(
+      "INSERT INTO activities (id, contact_id, company_id, deal_id, type, subject, body, due_date, duration_minutes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id, body!.contact_id || null, body!.company_id || null, body!.deal_id || null,
+      sanitize(body!.type as string, 50), sanitize(body!.subject as string, 200),
+      sanitize((body!.body || '') as string, 5000), body!.due_date || null,
+      body!.duration_minutes || null, body!.created_by || null, nowISO()
+    ).run();
+    // Update last_contacted_at on contact
+    if (body!.contact_id) {
+      await c.env.DB.prepare("UPDATE contacts SET last_contacted_at = ? WHERE id = ?").bind(nowISO(), body!.contact_id).run();
+    }
+    log('info', 'Activity created', { id, type: body!.type });
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /activities', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  log('info', 'Activity created', { id, type: body!.type });
-  return ok({ id });
 });
 
 app.put('/activities/:id', async (c) => {
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body) return fail('Missing body');
-  if (body.is_done === true || body.is_done === 1) {
-    await c.env.DB.prepare("UPDATE activities SET is_done = 1, completed_at = ? WHERE id = ?").bind(nowISO(), c.req.param('id')).run();
-  } else {
-    const allowed = ['subject', 'body', 'due_date', 'duration_minutes', 'type'];
-    const sets: string[] = [];
-    const vals: unknown[] = [];
-    for (const [k, v] of Object.entries(body)) {
-      if (allowed.includes(k)) { sets.push(`${k} = ?`); vals.push(typeof v === 'string' ? sanitize(v, 5000) : v); }
+  try {
+    if (body.is_done === true || body.is_done === 1) {
+      await c.env.DB.prepare("UPDATE activities SET is_done = 1, completed_at = ? WHERE id = ?").bind(nowISO(), c.req.param('id')).run();
+    } else {
+      const allowed = ['subject', 'body', 'due_date', 'duration_minutes', 'type'];
+      const sets: string[] = [];
+      const vals: unknown[] = [];
+      for (const [k, v] of Object.entries(body)) {
+        if (allowed.includes(k)) { sets.push(`${k} = ?`); vals.push(typeof v === 'string' ? sanitize(v, 5000) : v); }
+      }
+      if (sets.length > 0) { vals.push(c.req.param('id')); await c.env.DB.prepare(`UPDATE activities SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run(); }
     }
-    if (sets.length > 0) { vals.push(c.req.param('id')); await c.env.DB.prepare(`UPDATE activities SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run(); }
+    return ok({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'PUT /activities/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return ok({ updated: true });
 });
 
 app.delete('/activities/:id', async (c) => {
-  await c.env.DB.prepare("DELETE FROM activities WHERE id = ?").bind(c.req.param('id')).run();
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.prepare("DELETE FROM activities WHERE id = ?").bind(c.req.param('id')).run();
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /activities/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -588,8 +738,13 @@ app.get('/notes', async (c) => {
   if (dealId) { where += ' AND deal_id = ?'; binds.push(dealId); }
   if (companyId) { where += ' AND company_id = ?'; binds.push(companyId); }
 
-  const rows = await c.env.DB.prepare(`SELECT * FROM notes WHERE ${where} ORDER BY created_at DESC LIMIT 100`).bind(...binds).all();
-  return ok({ notes: rows.results });
+  try {
+    const rows = await c.env.DB.prepare(`SELECT * FROM notes WHERE ${where} ORDER BY created_at DESC LIMIT 100`).bind(...binds).all();
+    return ok({ notes: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /notes', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/notes', async (c) => {
@@ -597,14 +752,24 @@ app.post('/notes', async (c) => {
   const err = requireBody(body, 'body');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare("INSERT INTO notes (id, contact_id, company_id, deal_id, body, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, body!.contact_id || null, body!.company_id || null, body!.deal_id || null, sanitize(body!.body as string, 10000), body!.created_by || null, nowISO()).run();
-  return ok({ id });
+  try {
+    await c.env.DB.prepare("INSERT INTO notes (id, contact_id, company_id, deal_id, body, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, body!.contact_id || null, body!.company_id || null, body!.deal_id || null, sanitize(body!.body as string, 10000), body!.created_by || null, nowISO()).run();
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /notes', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/notes/:id', async (c) => {
-  await c.env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(c.req.param('id')).run();
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(c.req.param('id')).run();
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /notes/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -612,8 +777,13 @@ app.delete('/notes/:id', async (c) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.get('/tags', async (c) => {
-  const rows = await c.env.DB.prepare("SELECT * FROM tags ORDER BY name").all();
-  return ok({ tags: rows.results });
+  try {
+    const rows = await c.env.DB.prepare("SELECT * FROM tags ORDER BY name").all();
+    return ok({ tags: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /tags', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/tags', async (c) => {
@@ -621,13 +791,23 @@ app.post('/tags', async (c) => {
   const err = requireBody(body, 'name');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare("INSERT INTO tags (id, name, color) VALUES (?, ?, ?)").bind(id, sanitize(body!.name as string, 50), body!.color || '#6366f1').run();
-  return ok({ id });
+  try {
+    await c.env.DB.prepare("INSERT INTO tags (id, name, color) VALUES (?, ?, ?)").bind(id, sanitize(body!.name as string, 50), body!.color || '#6366f1').run();
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /tags', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/tags/:id', async (c) => {
-  await c.env.DB.prepare("DELETE FROM tags WHERE id = ?").bind(c.req.param('id')).run();
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.prepare("DELETE FROM tags WHERE id = ?").bind(c.req.param('id')).run();
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /tags/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -639,18 +819,28 @@ app.post('/email-events', async (c) => {
   const err = requireBody(body, 'type', 'contact_id');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare("INSERT INTO email_events (id, contact_id, deal_id, type, subject, opened_at, clicked_at, bounced, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, body!.contact_id, body!.deal_id || null, body!.type, sanitize((body!.subject || '') as string, 200),
-      body!.type === 'opened' ? nowISO() : null, body!.type === 'clicked' ? nowISO() : null,
-      body!.type === 'bounced' ? 1 : 0, nowISO()).run();
-  return ok({ id });
+  try {
+    await c.env.DB.prepare("INSERT INTO email_events (id, contact_id, deal_id, type, subject, opened_at, clicked_at, bounced, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, body!.contact_id, body!.deal_id || null, body!.type, sanitize((body!.subject || '') as string, 200),
+        body!.type === 'opened' ? nowISO() : null, body!.type === 'clicked' ? nowISO() : null,
+        body!.type === 'bounced' ? 1 : 0, nowISO()).run();
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /email-events', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/email-events', async (c) => {
   const contactId = new URL(c.req.url).searchParams.get('contact_id');
   if (!contactId) return fail('contact_id required');
-  const rows = await c.env.DB.prepare("SELECT * FROM email_events WHERE contact_id = ? ORDER BY created_at DESC LIMIT 50").bind(contactId).all();
-  return ok({ events: rows.results });
+  try {
+    const rows = await c.env.DB.prepare("SELECT * FROM email_events WHERE contact_id = ? ORDER BY created_at DESC LIMIT 50").bind(contactId).all();
+    return ok({ events: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /email-events', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -658,8 +848,13 @@ app.get('/email-events', async (c) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.get('/lead-scoring/rules', async (c) => {
-  const rows = await c.env.DB.prepare("SELECT * FROM lead_scoring_rules WHERE is_active = 1 ORDER BY created_at").all();
-  return ok({ rules: rows.results });
+  try {
+    const rows = await c.env.DB.prepare("SELECT * FROM lead_scoring_rules WHERE is_active = 1 ORDER BY created_at").all();
+    return ok({ rules: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'GET /lead-scoring/rules', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/lead-scoring/rules', async (c) => {
@@ -667,14 +862,24 @@ app.post('/lead-scoring/rules', async (c) => {
   const err = requireBody(body, 'field', 'operator', 'value', 'score');
   if (err) return fail(err);
   const id = uid();
-  await c.env.DB.prepare("INSERT INTO lead_scoring_rules (id, field, operator, value, score) VALUES (?, ?, ?, ?, ?)")
-    .bind(id, sanitize(body!.field as string, 50), sanitize(body!.operator as string, 20), sanitize(body!.value as string, 200), body!.score).run();
-  return ok({ id });
+  try {
+    await c.env.DB.prepare("INSERT INTO lead_scoring_rules (id, field, operator, value, score) VALUES (?, ?, ?, ?, ?)")
+      .bind(id, sanitize(body!.field as string, 50), sanitize(body!.operator as string, 20), sanitize(body!.value as string, 200), body!.score).run();
+    return ok({ id });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'POST /lead-scoring/rules', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/lead-scoring/rules/:id', async (c) => {
-  await c.env.DB.prepare("DELETE FROM lead_scoring_rules WHERE id = ?").bind(c.req.param('id')).run();
-  return ok({ deleted: true });
+  try {
+    await c.env.DB.prepare("DELETE FROM lead_scoring_rules WHERE id = ?").bind(c.req.param('id')).run();
+    return ok({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-crm', message: 'D1 query failed', endpoint: 'DELETE /lead-scoring/rules/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // AI lead scoring
