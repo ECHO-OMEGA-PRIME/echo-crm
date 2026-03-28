@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
 // ═══════════════════════════════════════════════════════════════════
-// ECHO CRM v1.0.0 — AI-Powered Customer Relationship Management
+// ECHO CRM v1.1.0 — AI-Powered Customer Relationship Management
 // D1 + KV + Engine Runtime + Shared Brain
 // ═══════════════════════════════════════════════════════════════════
 
@@ -132,12 +132,12 @@ app.use('*', async (c, next) => {
 // HEALTH & STATUS
 // ═══════════════════════════════════════════════════════════════════
 
-app.get('/', (c) => c.json({ service: 'echo-crm', version: '1.0.0', status: 'operational' }));
+app.get('/', (c) => c.json({ service: 'echo-crm', version: '1.1.0', status: 'operational' }));
 
 app.get('/health', async (c) => {
   let dbOk = false;
   try { const r = await c.env.DB.prepare("SELECT 1 AS ping").first(); dbOk = r?.ping === 1; } catch { /* */ }
-  return ok({ service: 'echo-crm', version: '1.0.0', d1: dbOk ? 'connected' : 'offline', ts: new Date().toISOString() });
+  return ok({ service: 'echo-crm', version: '1.1.0', d1: dbOk ? 'connected' : 'offline', ts: new Date().toISOString() });
 });
 
 app.get('/status', async (c) => {
@@ -149,7 +149,7 @@ app.get('/status', async (c) => {
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM pipelines").first<{ n: number }>(),
   ]);
   return ok({
-    service: 'echo-crm', version: '1.0.0',
+    service: 'echo-crm', version: '1.1.0',
     contacts: contacts?.n || 0, companies: companies?.n || 0, deals: deals?.n || 0,
     activities: activities?.n || 0, pipelines: pipelines?.n || 0,
     endpoints: 72, tables: 12, modules: 10,
@@ -221,6 +221,8 @@ app.put('/stages/:id', async (c) => {
 });
 
 app.delete('/stages/:id', async (c) => {
+  const activeDeals = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM deals WHERE stage_id = ?").bind(c.req.param('id')).first<{ n: number }>();
+  if (activeDeals && activeDeals.n > 0) return fail('Cannot delete stage with active deals');
   await c.env.DB.prepare("DELETE FROM deal_stages WHERE id = ?").bind(c.req.param('id')).run();
   return ok({ deleted: true });
 });
@@ -300,6 +302,7 @@ app.put('/contacts/:id', async (c) => {
 
 app.delete('/contacts/:id', async (c) => {
   await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM deals WHERE contact_id = ?").bind(c.req.param('id')),
     c.env.DB.prepare("DELETE FROM activities WHERE contact_id = ?").bind(c.req.param('id')),
     c.env.DB.prepare("DELETE FROM notes WHERE contact_id = ?").bind(c.req.param('id')),
     c.env.DB.prepare("DELETE FROM email_events WHERE contact_id = ?").bind(c.req.param('id')),
@@ -494,6 +497,7 @@ app.post('/deals/:id/move', async (c) => {
   if (err) return fail(err);
   // Get stage probability
   const stage = await c.env.DB.prepare("SELECT probability FROM deal_stages WHERE id = ?").bind(body!.stage_id).first<{ probability: number }>();
+  if (!stage) return c.json({ error: 'Stage not found' }, 404);
   await c.env.DB.prepare("UPDATE deals SET stage_id = ?, probability = ?, updated_at = ? WHERE id = ?")
     .bind(body!.stage_id, stage?.probability || 0, nowISO(), c.req.param('id')).run();
   await logActivity(c.env.DB, 'deal', c.req.param('id'), 'stage_moved');
@@ -517,7 +521,7 @@ app.get('/activities', async (c) => {
   if (type) { where += ' AND type = ?'; binds.push(type); }
   if (contactId) { where += ' AND contact_id = ?'; binds.push(contactId); }
   if (dealId) { where += ' AND deal_id = ?'; binds.push(dealId); }
-  if (upcoming === 'true') { where += ' AND is_done = 0 AND due_date IS NOT NULL'; }
+  if (upcoming === 'true') { where += " AND due_date >= date('now') AND is_done = 0"; }
 
   const order = upcoming === 'true' ? 'due_date ASC' : 'created_at DESC';
   binds.push(limit, offset);
@@ -816,8 +820,9 @@ app.post('/import/contacts', async (c) => {
     }
   }
 
+  const importStatus = errors > 0 ? 'partial' : 'completed';
   await c.env.DB.prepare("INSERT INTO imports (id, type, total_rows, imported, skipped, errors, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(importId, 'contacts', contacts.length, imported, skipped, errors, 'complete', nowISO()).run();
+    .bind(importId, 'contacts', contacts.length, imported, skipped, errors, importStatus, nowISO()).run();
   log('info', 'Contacts imported', { importId, imported, skipped, errors });
   return ok({ import_id: importId, imported, skipped, errors });
 });
