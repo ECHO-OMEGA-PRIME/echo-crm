@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
 // ═══════════════════════════════════════════════════════════════════
-// ECHO CRM v1.1.0 — AI-Powered Customer Relationship Management
-// D1 + KV + Engine Runtime + Shared Brain
+// ECHO CRM v2.0.0 — AI-Powered Customer Relationship Management
+// D1 + KV + Engine Runtime + Shared Brain + Stripe Payments
 // ═══════════════════════════════════════════════════════════════════
 
 interface Env {
@@ -12,6 +12,8 @@ interface Env {
   ENGINE_RUNTIME: Fetcher;
   SHARED_BRAIN: Fetcher;
   ECHO_API_KEY?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -56,6 +58,58 @@ function paginate(url: URL): { limit: number; offset: number } {
 function sanitize(input: string, maxLen = 2000): string {
   if (typeof input !== 'string') return '';
   return input.slice(0, maxLen).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+}
+
+// ── Stripe Plans ──────────────────────────────────────────────────
+
+const CRM_PLANS = [
+  { id: 'free', name: 'Free', price: 0, interval: 'month', features: ['50 contacts', '1 pipeline', 'Basic analytics', 'Email support'], limits: { contacts: 50, pipelines: 1, deals: 20 } },
+  { id: 'starter', name: 'Starter', price: 29.99, interval: 'month', features: ['500 contacts', '3 pipelines', 'Lead scoring', 'Import/export', 'Priority support'], limits: { contacts: 500, pipelines: 3, deals: 200 } },
+  { id: 'professional', name: 'Professional', price: 79.99, interval: 'month', features: ['5,000 contacts', '10 pipelines', 'AI lead scoring', 'Custom fields', 'API access', 'Integrations'], limits: { contacts: 5000, pipelines: 10, deals: 2000 } },
+  { id: 'enterprise', name: 'Enterprise', price: 199.99, interval: 'month', features: ['Unlimited contacts', 'Unlimited pipelines', 'Dedicated support', 'Custom integrations', 'White-label', 'SLA'], limits: { contacts: -1, pipelines: -1, deals: -1 } },
+] as const;
+
+// ── Stripe Signature Verification ────────────────────────────────
+
+async function verifyStripeSignature(payload: string, sigHeader: string, secret: string): Promise<boolean> {
+  try {
+    const parts = sigHeader.split(',');
+    let timestamp = '';
+    let signature = '';
+    for (const part of parts) {
+      const [key, val] = part.trim().split('=');
+      if (key === 't') timestamp = val;
+      if (key === 'v1') signature = val;
+    }
+    if (!timestamp || !signature) return false;
+
+    // Replay protection: reject if older than 5 minutes
+    const ts = parseInt(timestamp, 10);
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - ts) > 300) return false;
+
+    // HMAC-SHA256 with Web Crypto API
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signedPayload = `${timestamp}.${payload}`;
+    const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedPayload));
+    const computed = Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Constant-time comparison via XOR
+    if (computed.length !== signature.length) return false;
+    let diff = 0;
+    for (let i = 0; i < computed.length; i++) {
+      diff |= computed.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+    return diff === 0;
+  } catch {
+    return false;
+  }
 }
 
 // Rate Limiting
